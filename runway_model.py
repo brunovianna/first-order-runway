@@ -13,11 +13,33 @@ from modules.generator import OcclusionAwareGenerator
 from modules.keypoint_detector import KPDetector
 from animate import normalize_kp
 
+is_face = False
+
+def get_config(_path):
+    global is_face
+    if ("bair" in _path):
+        return "config/bair-256.yaml"
+    if ("fashion" in _path):
+        return "config/fashion-256.yaml"
+    if ("mgif" in _path):
+        return "config/mgif-256.yaml"
+    if ("nemo" in _path):
+        return "config/nemo-256.yaml"
+    if ("taichi" in _path):
+        return "config/taichi-256.yaml"
+    if ("vox" in _path):
+        is_face = True
+        return "config/vox-256.yaml"
+
+
 
 @runway.setup(options={'checkpoint': runway.file(extension='.tar')})
 def setup(opts):
+    global is_face
     #config_path = 'config/vox-256.yaml'
-    config_path = 'config/fashion-256.yaml'
+    checkpoint_path = opts['checkpoint']
+
+    config_path = get_config(checkpoint_path)
     with open(config_path) as f:
         config = yaml.load(f)
 
@@ -29,7 +51,6 @@ def setup(opts):
                              **config['model_params']['common_params'])
     kp_detector.cuda()
 
-    checkpoint_path = opts['checkpoint']
     checkpoint = torch.load(checkpoint_path)
     generator.load_state_dict(checkpoint['generator'])
     kp_detector.load_state_dict(checkpoint['kp_detector'])
@@ -40,9 +61,12 @@ def setup(opts):
     generator.eval()
     kp_detector.eval()
 
-    #fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False)
+    if (is_face):
+        fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False)
+        return generator, kp_detector, fa
+    else:
+        return generator, kp_detector
 
-    return generator, kp_detector
 
 
 def crop_face(fa, pil_image, pad=150):
@@ -73,14 +97,18 @@ kp_driving_initial = None
 @runway.command('generate', inputs={'driving_image': runway.image, 'source_image': runway.image}, outputs={'output': runway.image})
 def generate(model, inputs):
     global kp_driving_initial
-    #generator, kp_detector, fa = model
-    generator, kp_detector = model
-    source_image = inputs['source_image']
-    #cropped_source_image, _, _ = crop_face(fa, source_image)
-    #source = convert_to_torch_tensor(cropped_source_image)
-    source = convert_to_torch_tensor(source_image)
-    #driving = convert_to_torch_tensor(crop_face(fa, inputs['driving_image'])[0])
-    driving = convert_to_torch_tensor(inputs['driving_image'])
+    global is_face
+    if (is_face):
+        generator, kp_detector, fa = model
+        cropped_source_image, _, _ = crop_face(fa, source_image)
+        source = convert_to_torch_tensor(cropped_source_image)
+        driving = convert_to_torch_tensor(crop_face(fa, inputs['driving_image'])[0])
+    else:
+        generator, kp_detector = model
+        source_image = inputs['source_image']
+        source = convert_to_torch_tensor(source_image)
+        driving = convert_to_torch_tensor(inputs['driving_image'])
+
     kp_driving = kp_detector(driving)
     kp_source = kp_detector(source)
     if kp_driving_initial is None:
@@ -98,4 +126,5 @@ def generate(model, inputs):
 
 if __name__ == '__main__':
     #runway.run(host='localhost', port=8888, debug=True, model_options={'checkpoint': './vox-cpk.pth.tar'})
-    runway.run(host='localhost', port=8888, debug=True, model_options={'checkpoint': './fashion.pth.tar'})
+    #runway.run(host='localhost', port=8888, debug=True)
+    runway.run()
